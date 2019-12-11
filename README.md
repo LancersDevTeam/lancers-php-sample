@@ -1,4 +1,5 @@
 # Sample code collection
+Sample code. Written in PHP.
 
 ## License
 
