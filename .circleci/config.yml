@@ -1,0 +1,191 @@
+version: 2.1
+
+setup: true
+
+orbs:
+  aws-ecr: circleci/aws-ecr@7.0.0
+  aws-ecs: circleci/aws-ecs@2.2.0
+  aws-cli: circleci/aws-cli@2.0.0
+  path-filtering: circleci/path-filtering@0.0.3
+  slack: circleci/slack@3.4.2
+
+parameters:
+  deploy_app_pre:
+    type: boolean
+    default: false
+  deploy_app_private:
+    type: boolean
+    default: false
+
+executors:
+  docker_build:
+    machine:
+      docker_layer_caching: true
+
+references:
+default_config: &default_config
+  docker:
+    - image: hashicorp/terraform:1.0.5
+  working_directory: ~/project
+  environment:
+    TERRAFORM_ENV: ~/project/
+
+add_alpine_mirror_repo: &add_alpine_mirror_repo
+  run:
+    name: add repo mirror
+    command: |
+      echo "https://alpine.cs.nctu.edu.tw/v3.14/main" >> /etc/apk/repositories
+      echo "https://alpine.cs.nctu.edu.tw/v3.14/community" >> /etc/apk/repositories
+      echo "http://alpine.northrepo.ca/v3.14/main" >> /etc/apk/repositories
+      echo "http://alpine.northrepo.ca/v3.14/community" >> /etc/apk/repositories
+
+pre_set_terraform_environment: &pre_set_terraform_environment
+  run:
+    name: set terraform environment
+    command: |
+      mkdir -p ~/.aws
+      echo "[pre-prosheet-terraform]" > ~/.aws/credentials
+      echo "aws_access_key_id = ${PRE_TERRAFORM_AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials
+      echo "aws_secret_access_key = ${PRE_TERRAFORM_AWS_SECRET_ACCESS_KEY}" >> ~/.aws/credentials
+      echo "region = ap-northeast-1" >> ~/.aws/credentials
+pre_terraform_init: &pre_terraform_init
+  run:
+    name: terraform init
+    command: |
+      cd ~/project/terraform/pre
+      terraform init
+
+prd_set_terraform_environment: &prd_set_terraform_environment
+  run:
+    name: set terraform environment
+    command: |
+      mkdir -p ~/.aws
+      echo "[prd-prosheet-terraform]" > ~/.aws/credentials
+      echo "aws_access_key_id = ${PRD_TERRAFORM_AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials
+      echo "aws_secret_access_key = ${PRD_TERRAFORM_AWS_SECRET_ACCESS_KEY}" >> ~/.aws/credentials
+      echo "region = ap-northeast-1" >> ~/.aws/credentials
+prd_terraform_init: &prd_terraform_init
+  run:
+    name: terraform init
+    command: |
+      cd ~/project/terraform/prd
+      terraform init
+
+## Terraform CI
+jobs:
+  pre_terraform_fmt_validate:
+    <<: *default_config
+    steps:
+      - checkout
+      - *add_alpine_mirror_repo
+      - *pre_set_terraform_environment
+      - *pre_terraform_init
+      - run:
+          name: terraform fmt validate
+          command: |
+            apk add bash curl jq
+            cd ~/project/terraform/pre
+            terraform fmt
+            terraform validate
+      - slack/status:
+          fail_only: true
+          mentions: 'here'
+          failure_message: '[Pre] Error terraform validate 🚨 \n :innocent: ${CIRCLE_USERNAME}     :branch: ${CIRCLE_BRANCH}'
+          webhook: ${SLACK_WEBHOOK}
+      - slack/notify:
+          title: Pre 👍
+          color: '#42f486'
+          message: 'terraform validate OK ✨ \n :grin: ${CIRCLE_USERNAME}   :branch: ${CIRCLE_BRANCH}'
+          webhook: ${SLACK_WEBHOOK}
+
+  prd_terraform_fmt_validate:
+    <<: *default_config
+    steps:
+      - checkout
+      - *add_alpine_mirror_repo
+      - *prd_set_terraform_environment
+      - *prd_terraform_init
+      - run:
+          name: terraform fmt validate
+          command: |
+            apk add bash curl jq
+            cd ~/project/terraform/prd
+            terraform fmt
+            terraform validate
+      - slack/status:
+          fail_only: true
+          mentions: 'here'
+          failure_message: '[Prd] Error terraform validate 🚨 \n :innocent: ${CIRCLE_USERNAME}     :branch: ${CIRCLE_BRANCH}'
+          webhook: ${SLACK_WEBHOOK}
+      - slack/notify:
+          title: Prd 👍
+          color: '#42f486'
+          message: 'terraform validate OK ✨ \n :grin: ${CIRCLE_USERNAME}   :branch: ${CIRCLE_BRANCH}'
+          webhook: ${SLACK_WEBHOOK}
+
+  pre_terraform_plan:
+    <<: *default_config
+    steps:
+      - checkout
+      - *add_alpine_mirror_repo
+      - *pre_set_terraform_environment
+      - *pre_terraform_init
+      - run:
+          name: terraform plan
+          command: |
+            apk add bash curl jq
+            cd ~/project/terraform/pre
+            terraform plan
+      - slack/status:
+          fail_only: true
+          mentions: 'here'
+          failure_message: '[Pre] Error terraform plan 🚨 \n :innocent: ${CIRCLE_USERNAME}     :branch: ${CIRCLE_BRANCH}'
+          webhook: ${SLACK_WEBHOOK}
+      - slack/notify:
+          title: Pre 👍
+          color: '#42f486'
+          message: 'terraform plan OK ✨ \n :grin: ${CIRCLE_USERNAME}   :branch: ${CIRCLE_BRANCH}'
+          webhook: ${SLACK_WEBHOOK}
+
+  prd_terraform_plan:
+    <<: *default_config
+    steps:
+      - checkout
+      - *add_alpine_mirror_repo
+      - *prd_set_terraform_environment
+      - *prd_terraform_init
+      - run:
+          name: terraform plan
+          command: |
+            apk add bash curl jq
+            cd ~/project/terraform/prd
+            terraform plan
+      - slack/status:
+          fail_only: true
+          mentions: 'here'
+          failure_message: '[Prd] Error terraform plan 🚨 \n :innocent: ${CIRCLE_USERNAME}     :branch: ${CIRCLE_BRANCH}'
+          webhook: ${SLACK_WEBHOOK}
+      - slack/notify:
+          title: Prd 👍
+          color: '#42f486'
+          message: 'terraform plan OK ✨ \n :grin: ${CIRCLE_USERNAME}   :branch: ${CIRCLE_BRANCH}'
+          webhook: ${SLACK_WEBHOOK}
+
+workflows:
+  version: 2
+  ci:
+    jobs:
+      - pre_terraform_fmt_validate
+      - pre_terraform_plan:
+          requires:
+            - pre_terraform_fmt_validate
+      - prd_terraform_fmt_validate
+      - prd_terraform_plan:
+          requires:
+            - prd_terraform_fmt_validate
+      - path-filtering/filter:
+          base-revision: origin/master
+          config-path: .circleci/deploy.yml
+          mapping: |
+            terraform/pre/.* pre_terraform_apply true
+            terraform/prd/.* prd_terraform_apply true
